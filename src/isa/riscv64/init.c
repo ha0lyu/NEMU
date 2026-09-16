@@ -35,6 +35,7 @@ void init_pma();
 
 void init_riscv_timer();
 void init_device();
+void update_mmu_state();
 
 #define CSR_ZERO_INIT(name, addr) name->val = 0;
 
@@ -85,6 +86,9 @@ void init_isa() {
 #ifdef CONFIG_RV_SMRNMI
   mnstatus->val = 0;
   mnstatus->nmie = ISDEF(CONFIG_NMIE_INIT);
+#ifdef CONFIG_DEBUG
+  Log("mnstatus->nmie initialized to %d", mnstatus->nmie);
+#endif
 #endif //CONFIG_RV_SMRNMI
 
 #ifdef CONFIG_RV_SSTC
@@ -119,6 +123,8 @@ void init_isa() {
   pmpcfg0->val = 0;
   pmpcfg2->val = 0;
 #endif // CONFIG_RV_PMP_ENTRY_16
+
+  update_mmu_state();
 #ifdef CONFIG_RV_PMP_ENTRY_64
   pmpcfg0->val = 0;
   pmpcfg2->val = 0;

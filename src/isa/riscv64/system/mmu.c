@@ -227,6 +227,22 @@ void mmu_refresh_pma_cache(void) {
 void mmu_refresh_pma_cache(void) {
 }
 #endif
+
+static bool data_effective_address_identity_fast = false;
+
+static inline void update_effective_address_state(void) {
+#ifdef CONFIG_RVH
+  data_effective_address_identity_fast =
+    !hld_st && !get_mprv() && !cpu.v &&
+    ((cpu.mode == MODE_U && senvcfg->pmm == 0) ||
+     (cpu.mode == MODE_S && (mstatus->mxr || menvcfg->pmm == 0)) ||
+     (cpu.mode == MODE_M && mseccfg->pmm == 0));
+#else
+  data_effective_address_identity_fast =
+    !get_mprv() && cpu.mode == MODE_U && senvcfg->pmm == 0;
+#endif
+}
+
 #ifdef CONFIG_RVH
 static inline bool check_permission(PTE *pte, bool ok, vaddr_t vaddr, int type, int virt, int mode) {
 bool ifetch = (type == MEM_TYPE_IFETCH);
@@ -353,15 +369,14 @@ inline vaddr_t get_effective_address(vaddr_t vaddr, int type) {
     return vaddr;
   }
 
+  if (likely(!hld_st && data_effective_address_identity_fast)) {
+    return vaddr;
+  }
+
   bool virt = cpu.v;
   int mode = cpu.mode;
   int pmm = 0;
   int masked_width = 0;
-
-  // Early out fastpath for non-H & non-pmm applications
-  if (likely(!hld_st && !get_mprv() && mode == MODE_U && senvcfg->pmm == 0)) {
-    return vaddr;
-  }
 
   if (hld_st) {
     mode = hstatus->spvp;
@@ -551,7 +566,19 @@ static word_t pte_read(paddr_t addr, int type, int mode, vaddr_t vaddr) {
   int paddr_read_type = type == MEM_TYPE_IFETCH ? MEM_TYPE_IFETCH_READ :
                         type == MEM_TYPE_WRITE  ? MEM_TYPE_WRITE_READ  :
                                                   MEM_TYPE_READ;
+#ifdef CONFIG_SHARE
+  if (unlikely(cpu.guided_exec)) {
+    return paddr_read(addr, PTE_SIZE, paddr_read_type, paddr_read_type,
+                      mode, vaddr);
+  }
+  // PTE addresses have already been classified as PMEM above. Keep the
+  // physical-access checks and PMEM backend behavior, but skip generic address
+  // routing that would classify the same address again.
+  return paddr_read_pmem_checked(addr, PTE_SIZE, paddr_read_type,
+                                 paddr_read_type, mode, vaddr);
+#else
   return paddr_read(addr, PTE_SIZE, paddr_read_type, paddr_read_type, mode, vaddr);
+#endif
 }
 #endif // CONFIG_MULTICORE_DIFF
 
@@ -900,6 +927,7 @@ int update_mmu_state() {
   ifetch_mmu_state = update_mmu_state_internal(true);
   int data_mmu_state_old = data_mmu_state;
   data_mmu_state = update_mmu_state_internal(false);
+  update_effective_address_state();
 #ifdef CONFIG_RVH
   hyperinst_mmu_state = update_hyperinst_mmu_state_internal();
 #endif
@@ -1060,6 +1088,9 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type) {
   ptw_result = ptw(vaddr, type);
 #endif
 #ifdef FORCE_RAISE_PF
+  if (likely(!cpu.guided_exec || !cpu.execution_guide.force_raise_exception)) {
+    return ptw_result;
+  }
 #ifdef CONFIG_RVH
   if(ptw_result != MEM_RET_FAIL && (force_raise_pf(vaddr, type) != MEM_RET_OK || force_raise_gpf(vaddr, type) != MEM_RET_OK))
     return MEM_RET_FAIL;
