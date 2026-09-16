@@ -54,6 +54,9 @@ uint64_t g_nr_guest_instr = 0;
 uint64_t g_nr_vst = 0, g_nr_vst_unit = 0, g_nr_vst_unit_optimized = 0;
 static uint64_t g_timer = 0; // unit: us
 static bool g_print_step = false;
+static bool state_dump_pc_enabled = false;
+static bool state_dump_pc_hit = false;
+static vaddr_t state_dump_pc = 0;
 const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[4];
 
@@ -74,6 +77,26 @@ static int n_batch;             // instructions that execute() plans to batch
 // - instr_count_bb_unsettled handles special case where BATCH is end but BB is not end.
 
 Decode *prev_s;
+
+void cpu_set_state_dump_pc(vaddr_t pc) {
+  state_dump_pc = pc;
+  state_dump_pc_enabled = true;
+  state_dump_pc_hit = false;
+}
+
+static inline void dump_state_if_target_pc(vaddr_t pc) {
+  if (likely(!state_dump_pc_enabled || state_dump_pc_hit || pc != state_dump_pc)) {
+    return;
+  }
+
+  state_dump_pc_hit = true;
+  vaddr_t saved_pc = cpu.pc;
+  cpu.pc = pc;
+  printf("\n========== NEMU state at target PC " FMT_WORD " ==========\n", pc);
+  isa_reg_display();
+  printf("========== End NEMU state dump ==========\n\n");
+  cpu.pc = saved_pc;
+}
 
 #ifdef CONFIG_DEBUG
 static inline void debug_hook(vaddr_t pc, const char *asmbuf) {
@@ -410,6 +433,7 @@ static void execute(int n) {
 
   // main loop
   while (true) {
+    dump_state_if_target_pc(s->pc);
 #if defined(CONFIG_DEBUG) || defined(CONFIG_DIFFTEST) || defined(CONFIG_IQUEUE)
     this_s = s;
 #endif
@@ -681,6 +705,8 @@ static void execute(int n) {
 #endif // CONFIG_LIGHTQS_DEBUG
     cpu.amo = false;
     cpu.pbmt = 0;
+
+    dump_state_if_target_pc(cpu.pc);
 
     Decode *cache_s = tcache_lookup_instr(cpu.pc);
 
