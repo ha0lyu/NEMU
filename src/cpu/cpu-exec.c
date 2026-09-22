@@ -54,6 +54,11 @@ uint64_t g_nr_guest_instr = 0;
 uint64_t g_nr_vst = 0, g_nr_vst_unit = 0, g_nr_vst_unit_optimized = 0;
 static uint64_t g_timer = 0; // unit: us
 static bool g_print_step = false;
+typedef struct {
+  bool valid;
+  vaddr_t pc;
+} StateDumpRequest;
+static StateDumpRequest state_dump_request = {};
 const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[4];
 
@@ -74,6 +79,31 @@ static int n_batch;             // instructions that execute() plans to batch
 // - instr_count_bb_unsettled handles special case where BATCH is end but BB is not end.
 
 Decode *prev_s;
+
+void cpu_set_state_dump_pc(vaddr_t pc) {
+  state_dump_request = (StateDumpRequest) {
+    .valid = true,
+    .pc = pc,
+  };
+}
+
+void cpu_clear_state_dump_pc(void) {
+  state_dump_request = (StateDumpRequest) {};
+}
+
+static inline void dump_state_after_target_pc(vaddr_t executed_pc, vaddr_t display_pc) {
+  if (likely(!state_dump_request.valid || executed_pc != state_dump_request.pc)) {
+    return;
+  }
+
+  state_dump_request.valid = false;
+  vaddr_t saved_pc = cpu.pc;
+  cpu.pc = display_pc;
+  printf("\n========== NEMU state after target PC " FMT_WORD " ==========\n", executed_pc);
+  isa_reg_display();
+  printf("========== End NEMU state dump ==========\n\n");
+  cpu.pc = saved_pc;
+}
 
 #ifdef CONFIG_DEBUG
 static inline void debug_hook(vaddr_t pc, const char *asmbuf) {
@@ -412,6 +442,10 @@ static void execute(int n) {
   while (true) {
 #if defined(CONFIG_DEBUG) || defined(CONFIG_DIFFTEST) || defined(CONFIG_IQUEUE)
     this_s = s;
+#else
+    if (unlikely(state_dump_request.valid)) {
+      this_s = s;
+    }
 #endif
     __attribute__((unused)) rtlreg_t ls0, ls1, ls2;
     br_taken = false;
@@ -472,6 +506,9 @@ static void execute(int n) {
     IFDEF(CONFIG_INSTR_CNT_BY_INSTR, n_remain -= 1);
 
     save_globals(s);
+    if (unlikely(state_dump_request.valid)) {
+      dump_state_after_target_pc(this_s->pc, s->pc);
+    }
     debug_difftest(this_s, s);
   }
 
@@ -499,6 +536,9 @@ end_of_loop:
         unlikely(manual_cpt_quit), manual_cpt_quit);
   }
 
+  if (unlikely(state_dump_request.valid)) {
+    dump_state_after_target_pc(this_s->pc, s->pc);
+  }
   debug_difftest(this_s, s);
   save_globals(s);
 }
@@ -704,6 +744,10 @@ static void execute(int n) {
 
     IFDEF(CONFIG_INSTR_CNT_BY_INSTR, g_nr_guest_instr += 1);
 
+    if (unlikely(state_dump_request.valid)) {
+      dump_state_after_target_pc(s.pc, cpu.pc);
+    }
+
     IFDEF(CONFIG_IQUEUE, iqueue_commit(s.pc, (void *)&s.isa.instr.val, s.snpc - s.pc));
     IFDEF(CONFIG_DEBUG, debug_hook(s.pc, s.logbuf));
     IFDEF(CONFIG_DIFFTEST, difftest_step(s.pc, cpu.pc));
@@ -804,6 +848,9 @@ void cpu_exec(uint64_t n) {
     IFDEF(CONFIG_PERF_OPT, update_global());
 
     Loge("Longjmp happened. total insts: %'lu, cpu_exec remain: %'li", get_abs_instr_count(), n_remain_total);
+    if (cause == NEMU_EXEC_END) {
+      dump_state_after_target_pc(prev_s->pc, prev_s->snpc);
+    }
   }
 
   while (nemu_state.state == NEMU_RUNNING &&
@@ -838,6 +885,7 @@ void cpu_exec(uint64_t n) {
       cpu.pbmt = 0;
       cpu.isVldst = false;
       cpu.isVecUnitStore = false;
+      dump_state_after_target_pc(prev_s->pc, cpu.pc);
 
       // No need to settle instruction counting here, as it is done in longjmp handler.
       // It's necessary to flush tcache for exception: addr space may conflict in different priv/mmu mode.
