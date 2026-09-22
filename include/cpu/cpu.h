@@ -33,6 +33,8 @@ uint64_t get_abs_instr_count();
 uint64_t get_abs_instr_count_csr();
 
 void cpu_exec(uint64_t n);
+void cpu_set_state_dump_pc(vaddr_t pc);
+void cpu_clear_state_dump_pc(void);
 
 #define CONTEXT_STACK_SIZE 5
 extern int context_idx;

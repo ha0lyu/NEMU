@@ -20,6 +20,8 @@
 #include <checkpoint/semantic_point.h>
 #include <memory/image_loader.h>
 #include <memory/paddr.h>
+#include <cpu/cpu.h>
+#include <errno.h>
 #include <getopt.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -88,6 +90,7 @@ void sig_handler(int signum) {
 }
 
 static inline int parse_args(int argc, char *argv[]) {
+  cpu_clear_state_dump_pc();
   const struct option table[] = {
     {"batch"    , no_argument      , NULL, 'b'},
     {"max-instr", required_argument, NULL, 'I'},
@@ -134,6 +137,7 @@ static inline int parse_args(int argc, char *argv[]) {
     // dump state
     {"dump-mem"           , required_argument, NULL, 'M'},
     {"dump-reg"           , required_argument, NULL, 'R'},
+    {"target-pc"          , required_argument, NULL, 21},
 
     {0          , 0                , NULL,  0 },
   };
@@ -208,6 +212,18 @@ static inline int parse_args(int argc, char *argv[]) {
       case 'M':
           mem_dump_file = optarg;
           break;
+      case 21: {
+        char *end = NULL;
+        errno = 0;
+        uint64_t pc = strtoull(optarg, &end, 0);
+        if (optarg[0] == '-' || errno != 0 || end == optarg || *end != '\0' ||
+            (uint64_t)(vaddr_t)pc != pc) {
+          fprintf(stderr, "Invalid target PC: '%s'\n", optarg);
+          exit(1);
+        }
+        cpu_set_state_dump_pc((vaddr_t)pc);
+        break;
+      }
       case 'A': 
           #ifdef CONFIG_MEMORY_REGION_ANALYSIS
           Log("Set mem analysis log path %s", optarg);
@@ -316,6 +332,7 @@ static inline int parse_args(int argc, char *argv[]) {
 //        printf("\t--cpt-id                checkpoint id\n");
         printf("\t-M,--dump-mem=DUMP_FILE dump memory into FILE\n");
         printf("\t-R,--dump-reg=DUMP_FILE dump register value into FILE\n");
+        printf("\t--target-pc=ADDR         dump CPU state once after executing ADDR\n");
         printf("\n");
         exit(0);
     }
