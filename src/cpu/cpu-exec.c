@@ -879,7 +879,7 @@ void cpu_exec(uint64_t n) {
       Loge("Handle NEMU_EXEC_EXCEPTION");
       cause = 0;
       IFDEF(CONFIG_TDATA1_ETRIGGER, trig_action_t action = check_triggers_etrigger(cpu.TM, g_ex_cause));
-
+      dump_state_after_target_pc(prev_s->pc, prev_s->snpc);
       cpu.pc = raise_intr(g_ex_cause, prev_s->pc);
       cpu.amo = false; // clean up
       cpu.pbmt = 0;
@@ -912,7 +912,7 @@ void cpu_exec(uint64_t n) {
           trigger_handler(TRIG_TYPE_ICOUNT, icount_action, 0);
         #endif // CONFIG_TDATA1_ICOUNT
         IFDEF(CONFIG_TDATA1_ITRIGGER, trig_action_t itrigger_action = check_triggers_itrigger(cpu.TM, intr));
-
+        dump_state_after_target_pc(cpu.pc, cpu.pc);
         cpu.pc = raise_intr(intr, cpu.pc);
 
         // Settle instruction counting for not end BB.
